@@ -31,7 +31,7 @@
 %%% API
 %%%===================================================================
 
--spec create(string()) -> ok.
+-spec create(index_name()) -> ok.
 create(Name) ->
     create(Name, ?YZ_DEFAULT_SCHEMA_NAME).
 
@@ -48,9 +48,9 @@ create(Name) ->
 %% NOTE: All create requests are serialized through the claimant node
 %%       to avoid races between disjoint nodes.  If the claimant is
 %%       down no indexes may be created.
--spec create(string(), schema_name()) -> ok |
-                                         {error, schema_not_found} |
-                                         {error, {rpc_fail, node(), term()}}.
+-spec create(index_name(), schema_name()) -> ok |
+                                             {error, schema_not_found} |
+                                             {error, {rpc_fail, node(), term()}}.
 create(Name, SchemaName) ->
     case yz_schema:exists(SchemaName) of
         false ->
@@ -115,7 +115,7 @@ get_info_from_ring(Ring, Name) ->
 %% NOTE: This should typically be called by a the ring handler in
 %%       `yz_event'.  The `create/1' API should be used to create a
 %%       cluster-wide index.
--spec local_create(ring(), string()) -> ok.
+-spec local_create(ring(), index_name()) -> ok.
 local_create(Ring, Name) ->
     %% TODO: Allow data dir to be changed
     IndexDir = index_dir(Name),
@@ -151,7 +151,7 @@ local_create(Ring, Name) ->
     end.
 
 %% @doc Remove the index `Name' locally.
--spec local_remove(string()) -> ok.
+-spec local_remove(index_name()) -> ok.
 local_remove(Name) ->
     CoreProps = [
                     {core, Name},

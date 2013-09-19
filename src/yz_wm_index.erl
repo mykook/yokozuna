@@ -71,7 +71,7 @@
 -include("yokozuna.hrl").
 -include_lib("webmachine/include/webmachine.hrl").
 
--record(ctx, {index_name :: string(), % name the index
+-record(ctx, {index_name :: index_name() | undefined, % name the index
               props :: proplist(),    % properties of the body
               method :: atom(),       % HTTP method for the request
               ring :: ring()
@@ -86,7 +86,6 @@ routes() ->
     [{["yz", "index", index], yz_wm_index, []},
      {["yz", "index"], yz_wm_index, []}].
 
-
 %%%===================================================================
 %%% Callbacks
 %%%===================================================================
@@ -97,11 +96,15 @@ init(_Props) ->
 %% NOTE: Need to grab the ring once at beginning of request because it
 %%       could change as this request is being serviced.
 service_available(RD, Ctx=#ctx{}) ->
+    IndexName = case wrq:path_info(index, RD) of
+                    undefined -> undefined;
+                    V -> list_to_binary(V)
+                end,
     {true,
      RD,
      Ctx#ctx{
        method=wrq:method(RD),
-       index_name=wrq:path_info(index, RD),
+       index_name=IndexName,
        props=decode_json(wrq:req_body(RD)),
        ring=yz_misc:get_ring(transformed)
       }
@@ -124,7 +127,7 @@ content_types_accepted(RD, S) ->
 % given index, and returning a 2xx code if successful
 delete_resource(RD, S) ->
     IndexName = S#ctx.index_name,
-    case yz_index:exists(IndexName) of
+    case exists(IndexName) of
         true  ->
             case associated_buckets(IndexName, S#ctx.ring) of
                 [] ->
@@ -173,8 +176,8 @@ index_body(Ring, IndexName) ->
     Info = yz_index:get_info_from_ring(Ring, IndexName),
     SchemaName = yz_index:schema_name(Info),
     {struct, [
-        {"name", list_to_binary(IndexName)},
-        {"bucket", list_to_binary(IndexName)},
+        {"name", IndexName},
+        {"bucket", IndexName},
         {"schema", SchemaName}
     ]}.
 
@@ -189,8 +192,8 @@ schema_exists_response(RD, S) ->
     case yz_schema:exists(Name) of
         true  -> {false, RD, S};
         false ->
-            text_response(true, "Schema ~p does not exist~n",
-                [binary_to_list(Name)], RD, S)
+            text_response(true, "Schema ~s does not exist~n",
+                [Name], RD, S)
     end.
 
 malformed_request(RD, S) when S#ctx.method =:= 'PUT' ->
@@ -215,7 +218,7 @@ malformed_request(RD, S) ->
     case IndexName of
       undefined -> {false, RD, S};
       _ ->
-          case yz_index:exists(IndexName) of
+          case exists(IndexName) of
               true -> {false, RD, S};
               _ -> text_response({halt, 404}, "not found~n", [], RD, S)
           end
@@ -224,7 +227,7 @@ malformed_request(RD, S) ->
 %% Returns a 409 Conflict if this index already exists
 is_conflict(RD, S) when S#ctx.method =:= 'PUT' ->
     IndexName = S#ctx.index_name,
-    case yz_index:exists(IndexName) of
+    case exists(IndexName) of
         true  ->
             {true, RD, S};
         false ->
@@ -236,10 +239,10 @@ is_conflict(RD, S) when S#ctx.method =:= 'PUT' ->
 %%%===================================================================
 
 -spec associated_buckets(index_name(), ring()) -> [bucket()].
-associated_buckets(IndexName, Ring) ->
+associated_buckets(Index, Ring) ->
     AllBucketProps = riak_core_bucket:get_buckets(Ring),
-    Indexes = lists:map(fun yz_kv:get_index/1, AllBucketProps),
-    lists:filter(fun(I) -> I == IndexName end, Indexes).
+    Assoc = lists:filter(fun(BProps) -> yz_kv:get_index(BProps) == Index end, AllBucketProps),
+    lists:map(fun riak_core_bucket:name/1, Assoc).
 
 %% accepts a string and attempt to parse it into json
 decode_json(RDBody) ->
@@ -252,11 +255,17 @@ decode_json(RDBody) ->
           end
     end.
 
+-spec exists(undefined | index_name()) -> boolean().
+exists(undefined) ->
+    false;
+exists(IndexName) ->
+    yz_index:exists(IndexName).
+
 -spec maybe_create_index(index_name(), schema_name()) -> ok |
                                                          {error, schema_not_found} |
                                                          {error, {rpc_fail, node(), term()}}.
 maybe_create_index(IndexName, SchemaName)->
-    case yz_index:exists(IndexName) of
+    case exists(IndexName) of
         true  ->
             ok;
         false ->
